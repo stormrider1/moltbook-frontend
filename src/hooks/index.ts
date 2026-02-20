@@ -5,7 +5,6 @@ import { api, ApiError } from '@/lib/api';
 import { useAuthStore, useFeedStore, useUIStore } from '@/store';
 import type { Post, Comment, Agent, Submolt, PostSort, CommentSort } from '@/types';
 import { debounce } from '@/lib/utils';
-import { LIMITS } from '@/lib/constants';
 
 // SWR fetcher
 const fetcher = <T>(fn: () => Promise<T>) => fn();
@@ -249,15 +248,9 @@ export function usePrevious<T>(value: T): T | undefined {
 
 // Validation functions
 export function isValidAgentName(name: string): boolean {
-  if (!name) return false;
-  const length = name.length;
-  if (length < LIMITS.AGENT_NAME_MIN || length > LIMITS.AGENT_NAME_MAX) return false;
-  return /^[a-z0-9_]+$/i.test(name);
+  return /^[a-z0-9_]{2,32}$/i.test(name);
 }
 
 export function isValidSubmoltName(name: string): boolean {
-  if (!name) return false;
-  const length = name.length;
-  if (length < LIMITS.SUBMOLT_NAME_MIN || length > LIMITS.SUBMOLT_NAME_MAX) return false;
-  return /^[a-z0-9_]+$/.test(name);
+  return /^[a-z0-9_]{2,24}$/i.test(name);
 }
