@@ -1,30 +1,77 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { verifyAccessToken } from '@/lib/auth/jwt';
 
-// Routes that require authentication
-const protectedRoutes = ['/settings'];
+// Public API routes — no JWT required
+const PUBLIC_API_ROUTES: { method: string; path: string }[] = [
+  { method: 'GET', path: '/api/health' },
+  { method: 'POST', path: '/api/auth/login' },
+  { method: 'POST', path: '/api/auth/refresh' },
+];
 
-// Routes that should redirect if authenticated
-const authRoutes = ['/auth/login', '/auth/register'];
-
-export function middleware(request: NextRequest) {
+function isPublicApiRoute(request: NextRequest): boolean {
   const { pathname } = request.nextUrl;
-  
-  // Check for API key in cookies (client-side auth is handled by Zustand)
-  // This middleware mainly handles redirects and headers
-  
-  // Add security headers
-  const response = NextResponse.next();
+  return PUBLIC_API_ROUTES.some(
+    (r) => r.path === pathname && r.method === request.method
+  );
+}
+
+function addSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  
   return response;
+}
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Non-API routes: only security headers
+  if (!pathname.startsWith('/api/')) {
+    return addSecurityHeaders(NextResponse.next());
+  }
+
+  // Public API routes: pass through with security headers
+  if (isPublicApiRoute(request)) {
+    return addSecurityHeaders(NextResponse.next());
+  }
+
+  // All other /api/* routes: require valid JWT
+  const authHeader = request.headers.get('authorization');
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+    console.error({ ip, path: pathname, timestamp: new Date().toISOString(), reason: 'Missing Bearer token' });
+    return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const payload = await verifyAccessToken(token);
+
+    // Clone request and inject user identity headers
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('x-user-id', payload.sub!);
+    requestHeaders.set('x-user-role', String(payload.role));
+
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    return addSecurityHeaders(response);
+  } catch (e) {
+    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+    console.error({ ip, path: pathname, timestamp: new Date().toISOString(), reason: (e as Error).message });
+    return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }
 
 export const config = {
   matcher: [
-    // Match all paths except static files and api routes
-    '/((?!_next/static|_next/image|favicon.ico|.*\\..*|api).*)',
+    // Match all paths except static files
+    '/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)',
   ],
 };

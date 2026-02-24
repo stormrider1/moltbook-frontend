@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getMoltbookKey } from '@/lib/auth/store';
 
 const API_BASE = process.env.MOLTBOOK_API_URL || 'https://www.moltbook.com/api/v1';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader) {
+    const userId = request.headers.get('x-user-id');
+    const moltbookKey = userId ? getMoltbookKey(userId) : null;
+    if (!moltbookKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     const response = await fetch(`${API_BASE}/posts/${params.id}/downvote`, {
       method: 'POST',
-      headers: { Authorization: authHeader },
+      headers: { Authorization: `Bearer ${moltbookKey}` },
     });
-    
+
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
