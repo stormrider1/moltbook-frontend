@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { verifyAccessToken } from '@/lib/auth/jwt';
+import { getRequiredPermission } from '@/lib/auth/roles';
 
 // Public API routes — no JWT required
 const PUBLIC_API_ROUTES: { method: string; path: string }[] = [
@@ -23,6 +24,14 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+function forbidden(ip: string, pathname: string, method: string, userId: string, role: string, requiredPermission: string): NextResponse {
+  console.error({ ip, path: pathname, method, userId, role, requiredPermission, timestamp: new Date().toISOString(), reason: 'Forbidden' });
+  return new NextResponse(JSON.stringify({ error: 'Forbidden' }), {
+    status: 403,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -39,9 +48,9 @@ export async function middleware(request: NextRequest) {
   // All other /api/* routes: require valid JWT
   const authHeader = request.headers.get('authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown';
 
   if (!token) {
-    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
     console.error({ ip, path: pathname, timestamp: new Date().toISOString(), reason: 'Missing Bearer token' });
     return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
@@ -51,16 +60,24 @@ export async function middleware(request: NextRequest) {
 
   try {
     const payload = await verifyAccessToken(token);
+    const userId = payload.sub!;
+    const role = String(payload.role);
+    const permissions: string[] = Array.isArray(payload.permissions) ? payload.permissions : [];
 
-    // Clone request and inject user identity headers
+    // Permission check: verify the JWT's permissions cover this method + path
+    const required = getRequiredPermission(request.method, pathname);
+    if (!permissions.includes(required)) {
+      return forbidden(ip, pathname, request.method, userId, role, required);
+    }
+
+    // Inject user identity headers for route handlers
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set('x-user-id', payload.sub!);
-    requestHeaders.set('x-user-role', String(payload.role));
+    requestHeaders.set('x-user-id', userId);
+    requestHeaders.set('x-user-role', role);
 
     const response = NextResponse.next({ request: { headers: requestHeaders } });
     return addSecurityHeaders(response);
   } catch (e) {
-    const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
     console.error({ ip, path: pathname, timestamp: new Date().toISOString(), reason: (e as Error).message });
     return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
